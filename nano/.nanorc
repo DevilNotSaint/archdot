@@ -1,0 +1,18 @@
+include "/usr/share/nano-syntax-highlighting/*.nanorc"
+
+set linenumbers
+set numbercolor normal,black
+
+set titlecolor white,black
+
+set keycolor bold,brightgreen
+set functioncolor white
+
+set statuscolor brightwhite,red
+
+set brackets """)>]}"
+
+
+set emptyline
+
+set softwrap
