@@ -3,3 +3,6 @@
 *.secret
 .cache/
 local/
+__pycache__/
+*.pyc
+.dotctl.lock/

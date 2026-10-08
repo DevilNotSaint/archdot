@@ -7,13 +7,14 @@
 
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
-alias install='sudo pacman -S'
 alias c='clear'
 alias cc='clear && clear'
 alias mkdir='mkdir -p'
-
+alias install='sudo pacman -S'
 
 
 
 PS1='[\u@\h \W]\$ '
-export PULSE_SERVER=unix:/mnt/wslg/PulseServer 
+if [[ -S /mnt/wslg/PulseServer ]]; then
+    export PULSE_SERVER=unix:/mnt/wslg/PulseServer
+fi
