@@ -291,7 +291,10 @@ def action_choice(menu, render):
                         sequence += os.read(fd, 1).decode()
                         if sequence[-1].isalpha():
                             break
-                    return {'[A': 'up', '[B': 'down', 'OA': 'up', 'OB': 'down'}.get(sequence, key)
+                    # Only a standalone Escape exits; other terminal sequences
+                    # (including left/right arrows) are ignored.
+                    return {'[A': 'up', '[B': 'down', 'OA': 'up', 'OB': 'down'}.get(
+                        sequence, '' if sequence else key)
                 return key
         while True:
             marked = '\n'.join(('› ' if i == selected else '  ') + line.strip()
