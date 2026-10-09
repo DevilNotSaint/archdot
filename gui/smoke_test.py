@@ -27,12 +27,15 @@ def main():
             assert not app.busy, 'Background load did not finish'
         try:
             settle()
+<<<<<<< HEAD
             app.deiconify()
             app.geometry('900x650')
             app.update()
             for control in app.actions.winfo_children():
                 assert control.winfo_ismapped(), 'Package action is hidden'
                 assert control.winfo_rooty() + control.winfo_height() <= app.winfo_rooty() + app.winfo_height()
+=======
+>>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
             assert len(app.tree.get_children()) == 1
             app.navigate('backups')
             assert len(app.tree.get_children()) == 1
@@ -50,6 +53,7 @@ def main():
             app.update()
             for child in app.winfo_children():
                 if child.winfo_class() == 'Toplevel':
+<<<<<<< HEAD
                     def check_bounds(parent):
                         for widget in parent.winfo_children():
                             if isinstance(widget, SoftButton):
@@ -57,6 +61,8 @@ def main():
                                 assert widget.winfo_rooty() + widget.winfo_height() <= child.winfo_rooty() + child.winfo_height()
                             check_bounds(widget)
                     check_bounds(child)
+=======
+>>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
                     child.destroy()
             # Exercise the actual asynchronous CLI adapter on an isolated backup.
             original_dialog = app.dialog
