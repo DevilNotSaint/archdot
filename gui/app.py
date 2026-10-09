@@ -135,10 +135,6 @@ class App(tk.Tk):
         self.label(main, 'Поиск по имени или пути · Ctrl / Shift для выбора нескольких строк', 8, MUTED,
                    anchor='w').pack(fill='x', pady=(5, 10))
         table_card = Surface(main, PANEL, padding=8)
-<<<<<<< HEAD
-=======
-        table_card.pack(fill='both', expand=True)
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
         table = table_card.body
         self.tree = ttk.Treeview(table, columns=('name', 'state', 'detail'), show='headings', selectmode='extended')
         self.tree.pack(side='left', fill='both', expand=True)
@@ -163,14 +159,11 @@ class App(tk.Tk):
         self.activity_dot = self.activity.create_oval(4, 5, 11, 12, fill=PURPLE, outline='')
         self.status = self.label(status_bar, 'Загрузка…', 9, MUTED, anchor='w')
         self.status.pack(side='left', fill='x', expand=True)
-<<<<<<< HEAD
         # Reserve space for actions before giving the table the remaining height.
         status_bar.pack_configure(side='bottom', before=self.actions)
         self.details.pack_configure(side='bottom', before=self.actions)
         self.actions.pack_configure(side='bottom')
         table_card.pack(fill='both', expand=True)
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
         self.render_page()
 
     def animate_page(self):
@@ -374,7 +367,6 @@ class App(tk.Tk):
         self.dialog('Готово', output or 'Действие выполнено.')
         self.refresh()
 
-<<<<<<< HEAD
     def place_dialog(self, window):
         window.update_idletasks()
         width = window.winfo_reqwidth()
@@ -389,8 +381,6 @@ class App(tk.Tk):
         window.deiconify()
         window.grab_set()
 
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
     def dialog(self, title, text, on_confirm=None, confirm_text='Выполнить'):
         window = tk.Toplevel(self)
         window.title(title)
@@ -431,18 +421,10 @@ class App(tk.Tk):
         if self.busy:
             return
         window = tk.Toplevel(self)
-<<<<<<< HEAD
         window.withdraw()
         window.title('Добавить пакет')
         window.configure(bg=PANEL)
         window.transient(self)
-=======
-        window.title('Добавить пакет')
-        window.configure(bg=PANEL)
-        window.geometry('640x350')
-        window.transient(self)
-        window.grab_set()
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
         self.label(window, 'Новый дом для конфига', 18).pack(anchor='w', padx=24, pady=(24, 10))
         self.label(window, 'Выберите файл или папку. Вложенная структура сохранится.', 10, MUTED).pack(anchor='w', padx=24)
         form = tk.Frame(window, bg=PANEL)
@@ -457,11 +439,7 @@ class App(tk.Tk):
         hint = self.label(window, '', 9, MUTED)
         hint.pack(anchor='w', padx=24)
         actions = tk.Frame(window, bg=PANEL)
-<<<<<<< HEAD
         actions.pack(fill='x', padx=24, pady=(10, 24))
-=======
-        actions.pack(fill='x', padx=24)
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
         def pick(folder):
             chooser = filedialog.askdirectory if folder else filedialog.askopenfilename
             selected = chooser(parent=window, initialdir=str(self.target), title='Выберите конфиги')
@@ -492,10 +470,7 @@ class App(tk.Tk):
             self.task('Проверяем структуру…', lambda: model.dotctl.package_import_plan(self.repo, self.target, package_name, source_path), planned)
         local_button('Продолжить', prepare, True)
         window.bind('<Escape>', lambda _event: window.destroy())
-<<<<<<< HEAD
         self.place_dialog(window)
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
 
     def close(self):
         if self.busy:
