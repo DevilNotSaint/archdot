@@ -259,7 +259,6 @@ def select_numbers(title, labels, allow_all=False, render=None):
         message = 'Введите номера из списка; 0 — вернуться назад.'
 
 
-<<<<<<< HEAD
 def action_choice(menu, render):
     """Arrow navigation on a terminal; retain numeric input for pipes/scripts."""
     if not sys.stdin.isatty() or not sys.stdout.isatty():
@@ -315,8 +314,6 @@ def action_choice(menu, render):
                 digits += key
 
 
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
 def interactive(repo, target):
     prefix = ['--repo', str(repo), '--target', str(target)]
     menu = '''  1. Мои пакеты               — какие наборы конфигов доступны
@@ -366,11 +363,7 @@ def interactive(repo, target):
         try:
             title, options = 'Главное меню', menu
             show('Выберите действие цифрой. Подключение создаёт ссылки на файлы из пакетов.')
-<<<<<<< HEAD
             choice = action_choice(menu, render)
-=======
-            choice = input('Выберите действие: ').strip()
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
             if choice == '0':
                 return
             if choice == '11':
