@@ -23,14 +23,11 @@ alias vim=nvim
 alias ls='ls --color=auto'
 alias ll='ls -alh --color=auto'
 alias grep='grep --color=auto'
-<<<<<<< HEAD
-=======
 alias neofetch='fastfetch'
 alias fetch='fastfetch'
 alias lss='du -ah --max-depth 1'
 alias install='sudo pacman -S'
 alias top='btop'
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
 alias c='clear'
 alias cc='clear && clear'
 
@@ -121,12 +118,11 @@ export GPG_TTY=$(tty)
 # source /etc/profile.d/google-cloud-cli.sh
 
 
-<<<<<<< HEAD
 PS1='[\u@\h \W]\$ '
 if [[ -S /mnt/wslg/PulseServer ]]; then
     export PULSE_SERVER=unix:/mnt/wslg/PulseServer
 fi
-=======
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
@@ -134,4 +130,3 @@ export NVM_DIR="$HOME/.nvm"
 
 # flutter
 export PATH="/usr/bin/flutter/bin:$PATH"
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
