@@ -9,14 +9,18 @@ def blend(start, end, amount):
     return '#' + ''.join(f'{value:02x}' for value in values)
 
 
-def rounded(canvas, bounds, radius=14, **options):
+def rounded_points(bounds, radius=14):
     x1, y1, x2, y2 = bounds
     r = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
-    return canvas.create_polygon(
+    return (
         x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r,
         x2, y2 - r, x2, y2, x2 - r, y2, x1 + r, y2,
-        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1,
-        smooth=True, splinesteps=24, **options)
+        x1, y2, x1, y2 - r, x1, y1 + r, x1, y1)
+
+
+def rounded(canvas, bounds, radius=14, **options):
+    return canvas.create_polygon(*rounded_points(bounds, radius),
+                                 smooth=True, splinesteps=24, **options)
 
 
 class Surface(tk.Frame):
@@ -24,13 +28,13 @@ class Surface(tk.Frame):
         super().__init__(parent, bg=parent.cget('bg'), **kwargs)
         self.canvas = tk.Canvas(self, bg=self.cget('bg'), bd=0, highlightthickness=0)
         self.canvas.place(relwidth=1, relheight=1)
+        self.shape = rounded(self.canvas, (0, 0, 1, 1), fill=color, outline='')
         self.body = tk.Frame(self, bg=color)
         self.body.pack(fill='both', expand=True, padx=padding, pady=padding)
         self.bind('<Configure>', lambda event: self.paint(event.width, event.height, color))
 
     def paint(self, width, height, color):
-        self.canvas.delete('all')
-        rounded(self.canvas, (0, 0, width, height), fill=color, outline='')
+        self.canvas.coords(self.shape, *rounded_points((0, 0, width, height)))
 
 
 class SoftButton(tk.Canvas):
@@ -45,6 +49,8 @@ class SoftButton(tk.Canvas):
         super().__init__(parent, width=self.face.measure(text) + 32, height=42,
                          bg=parent.cget('bg'), bd=0, highlightthickness=0,
                          cursor='hand2', takefocus=True)
+        self.shape = rounded(self, (2, 2, 40, 40), radius=13, fill=fill, outline='')
+        self.caption = self.create_text(0, 0, text=text, font=self.face, fill=foreground)
         self.bind('<Configure>', lambda _event: self.paint())
         self.bind('<Enter>', lambda _event: self.hover(True))
         self.bind('<Leave>', lambda _event: self.hover(False))
@@ -117,13 +123,14 @@ class SoftButton(tk.Canvas):
         tick()
 
     def paint(self):
-        self.delete('all')
         width = max(self.winfo_width(), int(self.cget('width')) if self.winfo_width() <= 1 else 0)
         height = max(self.winfo_height(), 42)
-        rounded(self, (2, 2, width - 2, height - 2), radius=13, fill=self.current,
-                outline='#bcabdb' if self.focused and self.state != 'disabled' else '', width=1)
-        self.create_text(width / 2, height / 2 + int(self.pressed), text=self.text, font=self.face,
-                         fill='#8f889e' if self.state == 'disabled' else self.foreground)
+        self.coords(self.shape, *rounded_points((2, 2, width - 2, height - 2), 13))
+        self.itemconfigure(self.shape, fill=self.current,
+                           outline='#bcabdb' if self.focused and self.state != 'disabled' else '')
+        self.coords(self.caption, width / 2, height / 2 + int(self.pressed))
+        self.itemconfigure(self.caption, text=self.text,
+                           fill='#8f889e' if self.state == 'disabled' else self.foreground)
 
     def destroy(self):
         if self.job:

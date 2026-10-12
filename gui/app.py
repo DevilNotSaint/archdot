@@ -47,10 +47,14 @@ class App(tk.Tk):
         self.transition_job = None
         self.hover_row = ''
         self.pulse_job = None
+        self.poll_job = None
+        self.search_job = None
+        self.closing = False
+        self.rows_page = None
         self.setup_style()
         self.build()
         self.protocol('WM_DELETE_WINDOW', self.close)
-        self.after(60, self.poll)
+        self.poll_job = self.after(60, self.poll)
         self.refresh()
 
     def setup_style(self):
@@ -75,6 +79,20 @@ class App(tk.Tk):
                             BG if primary else TEXT, primary)
         self.controls.append(button)
         return button
+
+    def flow_buttons(self, frame):
+        def layout(event=None):
+            width = event.width if event else frame.winfo_width()
+            row, column, used = 0, 0, 0
+            for child in frame.winfo_children():
+                needed = child.winfo_reqwidth() + 8
+                if column and used + needed > width:
+                    row, column, used = row + 1, 0, 0
+                child.grid(row=row, column=column, sticky='w', padx=(0, 8), pady=3)
+                column += 1
+                used += needed
+        frame.bind('<Configure>', layout)
+        layout()
 
     def build(self):
         sidebar = tk.Frame(self, bg=PANEL, width=210)
@@ -125,7 +143,7 @@ class App(tk.Tk):
             self.label(card.body, caption, 9, MUTED).pack(anchor='w', pady=(2, 0))
             self.metrics.append(value)
         self.search = tk.StringVar()
-        self.search.trace_add('write', lambda *_: self.render_rows())
+        self.search.trace_add('write', self.schedule_search)
         search_card = Surface(main, CARD, padding=8)
         search_card.pack(fill='x')
         self.label(search_card.body, '⌕', 16, MUTED).pack(side='left', padx=(5, 10))
@@ -165,6 +183,7 @@ class App(tk.Tk):
         self.actions.pack_configure(side='bottom')
         table_card.pack(fill='both', expand=True)
         self.render_page()
+        self.update_summary()
 
     def animate_page(self):
         if self.transition_job:
@@ -233,10 +252,22 @@ class App(tk.Tk):
             actions = [('Убрать выбранные', lambda: self.operate('prune'), True),
                        ('Убрать все старые ссылки', lambda: self.operate('prune', True), False)]
         for text, action, primary in actions:
-            self.button(self.actions, text, action, primary).pack(side='left', padx=(0, 8))
+            self.button(self.actions, text, action, primary)
+        self.flow_buttons(self.actions)
         self.render_rows()
 
+    def schedule_search(self, *_):
+        if self.search_job:
+            self.after_cancel(self.search_job)
+        self.search_job = self.after(180, self.render_rows)
+
     def render_rows(self):
+        if self.search_job:
+            self.after_cancel(self.search_job)
+            self.search_job = None
+        selected = [self.rows[item] for item in self.tree.selection()
+                    if item in self.rows] if self.rows_page == self.page else []
+        self.rows_page = self.page
         self.tree.delete(*self.tree.get_children())
         self.hover_row = ''
         self.rows = {}
@@ -265,14 +296,17 @@ class App(tk.Tk):
             tags = (tag,) + (('stripe',) if len(self.rows) % 2 else ())
             item = self.tree.insert('', 'end', values=values, tags=tags)
             self.rows[item] = record
+            if record in selected:
+                self.tree.selection_add(item)
+        self.details.config(text='Выберите строки для действия.' if self.rows else 'Ничего не найдено.')
+        self.describe_selection()
+
+    def update_summary(self):
         self.repo_label.config(text=f'DOTFILES   {self.repo}')
         self.target_label.config(text=f'НАЗНАЧЕНИЕ   {self.target}')
         for label, count in zip(self.metrics, (len(self.data['packages']), len(self.data['backups']),
                                                sum(len(v) for v in self.data['stale'].values()))):
             label.config(text=str(count))
-        self.details.config(text='Выберите строки для действия.' if self.rows else
-                            'Здесь пока пусто. Добавьте пакет или выберите другую папку dotfiles.' if self.page == 'packages' else
-                            'Ничего не найдено — в этом разделе нет подходящих элементов.')
 
     def describe_selection(self, _event=None):
         selected = [self.rows[item] for item in self.tree.selection() if item in self.rows]
@@ -303,6 +337,14 @@ class App(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def poll(self):
+        self.poll_job = None
+        try:
+            self.process_event()
+        finally:
+            if not self.closing:
+                self.poll_job = self.after(60, self.poll)
+
+    def process_event(self):
         try:
             done, result, error = self.events.get_nowait()
         except queue.Empty:
@@ -318,13 +360,13 @@ class App(tk.Tk):
             else:
                 self.status.config(text='Готово')
                 done(result)
-        self.after(60, self.poll)
 
     def refresh(self):
         self.task('Проверяем конфиги…', lambda: model.snapshot(self.repo, self.target), self.loaded)
 
     def loaded(self, data):
         self.data = data
+        self.update_summary()
         self.render_rows()
 
     def change_path(self, which):
@@ -335,6 +377,7 @@ class App(tk.Tk):
         if selected:
             setattr(self, which, Path(selected).resolve())
             self.data = dict(packages=[], backups=[], stale={})
+            self.update_summary()
             self.render_rows()
             self.refresh()
 
@@ -453,7 +496,7 @@ class App(tk.Tk):
                     label.config(wraplength=max(1, event.width - 48))
         window.bind('<Configure>', reflow)
         actions = tk.Frame(window, bg=PANEL)
-        actions.pack(fill='x', padx=24, pady=(10, 24))
+        actions.pack(side='bottom', before=form, fill='x', padx=24, pady=(10, 24))
         def pick(folder):
             chooser = filedialog.askdirectory if folder else filedialog.askopenfilename
             selected = chooser(parent=window, initialdir=str(self.target), title='Выберите конфиги')
@@ -465,7 +508,6 @@ class App(tk.Tk):
         def local_button(text, action, primary=False):
             result = self.button(actions, text, action, primary)
             self.controls.remove(result)
-            result.pack(side='left', padx=(0, 8))
         local_button('Выбрать файл…', lambda: pick(False))
         local_button('Выбрать папку…', lambda: pick(True))
         def prepare():
@@ -483,6 +525,7 @@ class App(tk.Tk):
                 self.dialog('Создать пакет?', 'Исходные файлы останутся на месте.\n\n' + structure, create, 'Создать')
             self.task('Проверяем структуру…', lambda: model.dotctl.package_import_plan(self.repo, self.target, package_name, source_path), planned)
         local_button('Продолжить', prepare, True)
+        self.flow_buttons(actions)
         window.bind('<Escape>', lambda _event: window.destroy())
         self.place_dialog(window)
 
@@ -493,7 +536,8 @@ class App(tk.Tk):
         self.destroy()
 
     def destroy(self):
-        for job in (self.transition_job, self.pulse_job):
+        self.closing = True
+        for job in (self.transition_job, self.pulse_job, self.poll_job, self.search_job):
             if job:
                 self.after_cancel(job)
         super().destroy()

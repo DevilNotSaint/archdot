@@ -16,8 +16,25 @@ def exists(path):
     return os.path.lexists(path)
 
 
+def walk_error(exc):
+    raise exc
+
+
+@contextlib.contextmanager
+def operation_lock(repo):
+    lock = repo / '.dotctl.lock'
+    try:
+        lock.mkdir()
+    except FileExistsError:
+        raise ValueError(f'Другая операция активна или осталась блокировка: {lock}') from None
+    try:
+        yield
+    finally:
+        lock.rmdir()
+
+
 def files(package):
-    for base, dirs, names in os.walk(package):
+    for base, dirs, names in os.walk(package, onerror=walk_error):
         for name in dirs + names:
             path = Path(base) / name
             if path.is_symlink():
@@ -41,8 +58,6 @@ def packages_in(repo):
 def repository_links(repo, target, orphan_only=False):
     """Find Stow-shaped links by their stored path, even if the source is gone."""
     found = []
-    def walk_error(exc):
-        raise exc
     for base, dirs, names in os.walk(target, followlinks=False, onerror=walk_error):
         root = Path(base)
         dirs[:] = [name for name in dirs if root / name != repo]
@@ -72,12 +87,7 @@ def remove_repository_links(repo, target, selected, dry_run=False, orphan_only=F
         print(f'Убрать ссылку: {link} → {source}')
     if dry_run:
         return
-    lock = repo / '.dotctl.lock'
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError(f'Другая операция активна или осталась блокировка: {lock}')
-    try:
+    with operation_lock(repo):
         for _, link, source in candidates:
             if any(parent.is_symlink() for parent in link.parents if parent != target and target in parent.parents):
                 raise ValueError(f'Родитель ссылки изменился: {link}')
@@ -86,8 +96,6 @@ def remove_repository_links(repo, target, selected, dry_run=False, orphan_only=F
             if orphan_only and source.exists():
                 raise ValueError(f'Источник ссылки появился снова: {source}')
             link.unlink()
-    finally:
-        lock.rmdir()
 
 
 def confirm(prompt):
@@ -139,13 +147,8 @@ def package_import_plan(repo, target, name, path):
 
 
 def import_package(repo, target, name, path):
-    source, relative, candidates = package_import_plan(repo, target, name, path)
-    lock = repo / '.dotctl.lock'
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError(f'Другая операция активна или осталась блокировка: {lock}')
-    try:
+    with operation_lock(repo):
+        source, relative, candidates = package_import_plan(repo, target, name, path)
         with tempfile.TemporaryDirectory(prefix='.dotctl-import-', dir=repo) as staging:
             staged_package = Path(staging) / 'package'
             destination = staged_package / relative
@@ -157,8 +160,6 @@ def import_package(repo, target, name, path):
             if exists(repo / name):
                 raise ValueError(f'Пакет уже существует: {name}')
             staged_package.rename(repo / name)
-    finally:
-        lock.rmdir()
     return len(candidates)
 
 
@@ -573,7 +574,7 @@ def main(argv=None):
     destinations = {dest for _, dest, _ in entries}
     if any(backup in destinations for _, _, backup in entries):
         raise ValueError('A package file collides with a backup path')
-    if any(a in b.parents for a in destinations for b in destinations):
+    if any(parent in destinations for dest in destinations for parent in dest.parents):
         raise ValueError('Packages contain conflicting file and directory paths')
     if args.file:
         if args.command not in {'backups', 'clean'}:
@@ -602,11 +603,12 @@ def main(argv=None):
         if args.command == 'clean' and not args.dry_run and backups:
             if not args.yes:
                 raise ValueError('Permanent deletion requires --yes; preview with --dry-run')
-            # Recheck immediately before deletion; never recurse into directories.
-            if any(p.is_dir() and not p.is_symlink() for p in backups):
-                raise ValueError('Directory backups require manual review; nothing deleted')
-            for backup in backups:
-                backup.unlink()
+            with operation_lock(repo):
+                # Recheck immediately before deletion; never recurse into directories.
+                if any(p.is_dir() and not p.is_symlink() for p in backups):
+                    raise ValueError('Directory backups require manual review; nothing deleted')
+                for backup in backups:
+                    backup.unlink()
         return
     stow = shutil.which('stow')
     if not stow:
@@ -639,13 +641,11 @@ def main(argv=None):
             else:
                 print(f'Нет ссылки этого пакета, без изменений: {dest}')
         return
-    lock = repo / '.dotctl.lock'
-    try:
-        lock.mkdir()
-    except FileExistsError:
-        raise ValueError(f'Найдена блокировка операции: {lock}. Это не папка пакета. '
-                         'Если другой экземпляр dotctl не запущен, проверьте конфиги после предыдущей операции '
-                         'и удалите пустую папку .dotctl.lock перед повторным запуском.')
+    with operation_lock(repo):
+        apply_stow(args, repo, entries, conflicts, command)
+
+
+def apply_stow(args, repo, entries, conflicts, command):
     moved = []
     original = {dest for _, dest, _ in entries if exists(dest)}
     try:
@@ -671,8 +671,6 @@ def main(argv=None):
                 if not exists(dest):
                     backup.rename(dest)
         raise
-    finally:
-        lock.rmdir()
 
 
 if __name__ == '__main__':
