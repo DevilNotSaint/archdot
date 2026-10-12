@@ -367,28 +367,34 @@ class App(tk.Tk):
         self.dialog('Готово', output or 'Действие выполнено.')
         self.refresh()
 
-    def place_dialog(self, window):
+    def place_dialog(self, window, preferred=None, minimum=None):
         window.update_idletasks()
-        width = window.winfo_reqwidth()
-        height = window.winfo_reqheight()
-        window.minsize(width, height)
+        # Leave room for window-manager decorations and the desktop panel.
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        available_width = max(1, screen_width - 48)
+        available_height = max(1, screen_height - 96)
+        requested = (window.winfo_reqwidth(), window.winfo_reqheight())
+        desired = preferred or requested
+        width = min(max(desired[0], minimum[0] if minimum else requested[0]), available_width)
+        height = min(max(desired[1], minimum[1] if minimum else requested[1]), available_height)
+        min_width, min_height = minimum or requested
+        window.minsize(min(min_width, width), min(min_height, height))
         self.update_idletasks()
         x = max(0, min(self.winfo_rootx() + (self.winfo_width() - width) // 2,
-                       window.winfo_screenwidth() - width))
+                       screen_width - width - 24))
         y = max(0, min(self.winfo_rooty() + (self.winfo_height() - height) // 2,
-                       window.winfo_screenheight() - height))
+                       screen_height - height - 72))
         window.geometry(f'{width}x{height}+{x}+{y}')
         window.deiconify()
         window.grab_set()
 
     def dialog(self, title, text, on_confirm=None, confirm_text='Выполнить'):
         window = tk.Toplevel(self)
+        window.withdraw()
         window.title(title)
         window.configure(bg=PANEL)
-        window.geometry('740x490')
-        window.minsize(560, 340)
         window.transient(self)
-        window.grab_set()
         self.label(window, title, 18).pack(anchor='w', padx=24, pady=(22, 14))
         box = tk.Frame(window, bg=PANEL)
         box.pack(fill='both', expand=True, padx=24)
@@ -401,7 +407,7 @@ class App(tk.Tk):
         scroll.pack(side='right', fill='y')
         content.config(yscrollcommand=scroll.set)
         footer = tk.Frame(window, bg=PANEL)
-        footer.pack(fill='x', padx=24, pady=20)
+        footer.pack(side='bottom', before=box, fill='x', padx=24, pady=20)
         # Dialog buttons are short-lived and excluded from the global busy list.
         def button(text, command, primary=False):
             result = self.button(footer, text, command, primary)
@@ -416,6 +422,7 @@ class App(tk.Tk):
         close = button('Отмена' if on_confirm else 'Закрыть', window.destroy)
         close.focus_set()
         window.bind('<Escape>', lambda _event: window.destroy())
+        self.place_dialog(window, preferred=(740, 490), minimum=(560, 340))
 
     def add_package(self):
         if self.busy:
@@ -426,7 +433,9 @@ class App(tk.Tk):
         window.configure(bg=PANEL)
         window.transient(self)
         self.label(window, 'Новый дом для конфига', 18).pack(anchor='w', padx=24, pady=(24, 10))
-        self.label(window, 'Выберите файл или папку. Вложенная структура сохранится.', 10, MUTED).pack(anchor='w', padx=24)
+        description = self.label(window, 'Выберите файл или папку. Вложенная структура сохранится.', 10, MUTED,
+                                 justify='left', anchor='w', wraplength=560)
+        description.pack(fill='x', padx=24)
         form = tk.Frame(window, bg=PANEL)
         form.pack(fill='x', padx=24, pady=18)
         self.label(form, 'Имя пакета').grid(row=0, column=0, sticky='w', pady=8)
@@ -436,8 +445,13 @@ class App(tk.Tk):
         self.label(form, 'Источник').grid(row=1, column=0, sticky='w', pady=8)
         tk.Entry(form, textvariable=path, bg=CARD, fg=TEXT, insertbackground=PURPLE, relief='flat', bd=8).grid(row=1, column=1, sticky='ew', padx=(12, 0))
         form.columnconfigure(1, weight=1)
-        hint = self.label(window, '', 9, MUTED)
-        hint.pack(anchor='w', padx=24)
+        hint = self.label(window, '', 9, MUTED, anchor='w', justify='left', wraplength=560, height=2)
+        hint.pack(fill='x', padx=24)
+        def reflow(event):
+            if event.widget == window:
+                for label in (description, hint):
+                    label.config(wraplength=max(1, event.width - 48))
+        window.bind('<Configure>', reflow)
         actions = tk.Frame(window, bg=PANEL)
         actions.pack(fill='x', padx=24, pady=(10, 24))
         def pick(folder):

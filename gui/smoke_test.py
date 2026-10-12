@@ -27,15 +27,12 @@ def main():
             assert not app.busy, 'Background load did not finish'
         try:
             settle()
-<<<<<<< HEAD
             app.deiconify()
             app.geometry('900x650')
             app.update()
             for control in app.actions.winfo_children():
                 assert control.winfo_ismapped(), 'Package action is hidden'
                 assert control.winfo_rooty() + control.winfo_height() <= app.winfo_rooty() + app.winfo_height()
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
             assert len(app.tree.get_children()) == 1
             app.navigate('backups')
             assert len(app.tree.get_children()) == 1
@@ -44,25 +41,41 @@ def main():
             app.navigate('stale')
             assert not app.tree.get_children()
             app.navigate('packages')
-            app.dialog('Проверка', 'Тест предварительного просмотра', lambda: None)
+            def check_buttons(window):
+                def visit(parent):
+                    for widget in parent.winfo_children():
+                        if isinstance(widget, SoftButton):
+                            assert widget.winfo_ismapped(), 'Dialog action is hidden'
+                            assert widget.winfo_rootx() >= window.winfo_rootx()
+                            assert widget.winfo_rooty() >= window.winfo_rooty()
+                            assert widget.winfo_rootx() + widget.winfo_width() <= window.winfo_rootx() + window.winfo_width()
+                            assert widget.winfo_rooty() + widget.winfo_height() <= window.winfo_rooty() + window.winfo_height()
+                        visit(widget)
+                visit(window)
+            app.dialog('Проверка', 'Очень длинный путь/' * 500, lambda: None)
             app.update()
             for child in app.winfo_children():
                 if child.winfo_class() == 'Toplevel':
+                    check_buttons(child)
+                    expected_x = app.winfo_rootx() + (app.winfo_width() - child.winfo_width()) // 2
+                    assert abs(child.winfo_rootx() - expected_x) < 40, 'Dialog is not centered'
+                    child.geometry('560x340')
+                    app.update()
+                    check_buttons(child)
                     child.destroy()
             app.add_package()
             app.update()
             for child in app.winfo_children():
                 if child.winfo_class() == 'Toplevel':
-<<<<<<< HEAD
-                    def check_bounds(parent):
-                        for widget in parent.winfo_children():
-                            if isinstance(widget, SoftButton):
-                                assert widget.winfo_rootx() + widget.winfo_width() <= child.winfo_rootx() + child.winfo_width()
-                                assert widget.winfo_rooty() + widget.winfo_height() <= child.winfo_rooty() + child.winfo_height()
-                            check_bounds(widget)
-                    check_bounds(child)
-=======
->>>>>>> 35f7c3512f34e187b3f593f86ca683801d7ffb07
+                    check_buttons(child)
+                    # Empty submission must display validation without pushing
+                    # the action row outside the window.
+                    actions = [widget for frame in child.winfo_children()
+                               for widget in frame.winfo_children()
+                               if isinstance(widget, SoftButton)]
+                    actions[-1].invoke()
+                    app.update()
+                    check_buttons(child)
                     child.destroy()
             # Exercise the actual asynchronous CLI adapter on an isolated backup.
             original_dialog = app.dialog
