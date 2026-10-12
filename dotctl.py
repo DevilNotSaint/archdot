@@ -35,6 +35,8 @@ def operation_lock(repo):
 
 def files(package):
     for base, dirs, names in os.walk(package, onerror=walk_error):
+        dirs[:] = [name for name in dirs if not name.endswith('-backup')]
+        names = [name for name in names if not name.endswith('-backup')]
         for name in dirs + names:
             path = Path(base) / name
             if path.is_symlink():
@@ -47,6 +49,21 @@ def files(package):
 
 def managed(target, source):
     return target.is_symlink() and target.resolve() == source.resolve()
+
+
+def connected_packages(repo, target):
+    """Only nonempty packages whose every file is linked are connected."""
+    connected = set()
+    for name, folder in packages_in(repo).items():
+        if folder.is_symlink():
+            continue
+        try:
+            sources = list(files(folder))
+            if sources and all(managed(target / source.relative_to(folder), source) for source in sources):
+                connected.add(name)
+        except (OSError, ValueError, RuntimeError):
+            continue
+    return connected
 
 
 def packages_in(repo):
@@ -122,6 +139,8 @@ def package_import_plan(repo, target, name, path):
         relative = source.relative_to(target)
     except ValueError:
         raise ValueError(f'Выберите конфиг внутри каталога {target}')
+    if any(part.endswith('-backup') for part in relative.parts):
+        raise ValueError('Бэкапы с суффиксом -backup нельзя импортировать как конфиги.')
     if source == target or source == repo or repo in source.parents or source in repo.parents:
         raise ValueError('Нельзя импортировать домашний каталог или сам репозиторий.')
     for item in [source] + list(source.parents):
@@ -135,7 +154,7 @@ def package_import_plan(repo, target, name, path):
     if not candidates:
         raise ValueError('В выбранном каталоге нет файлов конфигурации.')
     for item in candidates:
-        if not item.is_file() or item.name == '.stow-local-ignore':
+        if not item.is_file() or item.name == '.stow-local-ignore' or item.name.endswith('-backup'):
             raise ValueError(f'Нельзя импортировать этот файл: {item}')
     new_paths = {item.relative_to(target) for item in candidates}
     for other in packages_in(repo).values():
@@ -154,7 +173,7 @@ def import_package(repo, target, name, path):
             destination = staged_package / relative
             destination.parent.mkdir(parents=True)
             if source.is_dir():
-                shutil.copytree(source, destination)
+                shutil.copytree(source, destination, ignore=shutil.ignore_patterns('*-backup'))
             else:
                 shutil.copy2(source, destination)
             if exists(repo / name):
@@ -260,18 +279,25 @@ def select_numbers(title, labels, allow_all=False, render=None):
         message = 'Введите номера из списка; 0 — вернуться назад.'
 
 
-def select_actions(page, labels, render, verb='Подключить'):
+def select_actions(page, labels, render, verb='Подключить', connected=None):
     """Space toggles rows; Enter applies the selection or a typed command."""
     selected = []
     cursor = 0
     typed = ''
     message = ''
     terminal = sys.stdin.isatty() and sys.stdout.isatty()
+    color = sys.stdout.isatty() and 'NO_COLOR' not in os.environ
+    def caption(i, label):
+        if connected is None or not color:
+            return label
+        return f'\033[{32 if i in connected else 31}m{label}\033[0m'
     def screen():
-        items = '\n'.join(f'{"›" if terminal and i == cursor else " "} {i + 1}. [{"✓" if i in selected else " "}] {label}'
+        items = '\n'.join(f'{"›" if terminal and i == cursor else " "} {i + 1}. [{"✓" if i in selected else " "}] {caption(i, label)}'
                           for i, label in enumerate(labels))
         items += (f'\n\n↑/↓ — курсор · Пробел — отметить · Enter — {verb.lower()} выбранные'
                   '\n-a — все · 1 2 5 -s — выбранные по номерам · 0 / Esc — назад')
+        if connected is not None:
+            items += ' · Зелёный — подключён, красный — не подключён полностью'
         return items
     with terminal_keys() if terminal else contextlib.nullcontext() as read_key:
         while True:
@@ -427,14 +453,14 @@ def interactive(repo, target):
             main(prefix + command)
         return output.getvalue().strip()
 
-    def choose(page, labels, allow_all=False, actions=False, verb='Подключить'):
+    def choose(page, labels, allow_all=False, actions=False, verb='Подключить', connected=None):
         nonlocal title, options
         def selection_screen(page, items, result=''):
             nonlocal title, options
             title, options = page, items
             render(page, items, result)
         if actions:
-            return select_actions(page, labels, selection_screen, verb)
+            return select_actions(page, labels, selection_screen, verb, connected)
         items = '\n'.join(f'  {i + 1}. {label}' for i, label in enumerate(labels)) + '\n  0. Назад'
         while True:
             selection_screen(page, items)
@@ -547,8 +573,10 @@ def interactive(repo, target):
                 if not mode:
                     continue
                 if mode == [0]:
+                    connected = connected_packages(repo, target)
                     indexes = choose('Главное меню → Очистка → Бэкапы пакетов', names,
-                                     actions=True, verb='Удалить')
+                                     actions=True, verb='Удалить',
+                                     connected={i for i, name in enumerate(names) if name in connected})
                     if not indexes:
                         continue
                     command = ['clean'] + [names[index] for index in indexes]
@@ -576,8 +604,10 @@ def interactive(repo, target):
             elif choice != 'clean':
                 action_title = {'1': 'Подключить пакеты', '3': 'Отключить пакеты',
                                 '6': 'Посмотреть, что изменится'}[choice]
+                connected = connected_packages(repo, target)
                 indexes = choose('Главное меню → ' + action_title, names, actions=True,
-                                 verb={'1': 'Подключить', '3': 'Отключить', '6': 'Проверить'}[choice])
+                                 verb={'1': 'Подключить', '3': 'Отключить', '6': 'Проверить'}[choice],
+                                 connected={i for i, name in enumerate(names) if name in connected})
                 if not indexes:
                     continue
                 selection = [names[index] for index in indexes]
@@ -720,12 +750,14 @@ def main(argv=None):
         for dest, backup in conflicts:
             if dest.is_dir() and not dest.is_symlink():
                 raise ValueError(f'Refusing to replace a directory: {dest}')
+            if dest.is_symlink() and not dest.is_file():
+                raise ValueError(f'Нельзя сохранить содержимое ссылки в бэкап: {dest}')
             if exists(backup):
                 raise ValueError(f'Уже есть бэкап: {backup}. Существующий конфиг нельзя сохранить поверх него. '
                                  'Сохраните бэкап в другом месте или удалите через меню, затем повторите подключение.')
             print(f'Сохранить бэкап: {dest} -> {backup}')
     command = [stow, '--dir', str(repo), '--target', str(target), '--no-folding',
-               '--ignore=(?!)', '--stow' if args.command == 'apply' else '--delete'] + selected
+               '--ignore=(^|/)[^/]*-backup($|/)', '--stow' if args.command == 'apply' else '--delete'] + selected
     print(('Подключить пакеты: ' if args.command == 'apply' else 'Отключить пакеты: ') + ', '.join(selected))
     if args.dry_run:
         for source, dest, _ in entries:
@@ -749,8 +781,26 @@ def apply_stow(args, repo, entries, conflicts, command):
     try:
         if args.command == 'apply':
             for dest, backup in conflicts:
-                dest.rename(backup)
-                moved.append((dest, backup))
+                link_target = os.readlink(dest) if dest.is_symlink() else None
+                if link_target is None:
+                    dest.rename(backup)
+                else:
+                    # Snapshot the user's file, not the link or package content.
+                    with backup.open('xb') as output:
+                        try:
+                            with dest.open('rb') as source:
+                                shutil.copyfileobj(source, output)
+                        except OSError:
+                            output.close()
+                            backup.unlink()
+                            raise
+                    try:
+                        shutil.copystat(dest, backup)
+                        dest.unlink()
+                    except OSError:
+                        backup.unlink()
+                        raise
+                moved.append((dest, backup, link_target))
         # Stow's --ignore adds rules instead of replacing built-in defaults.
         # An empty global ignore file gives it the same file set as our planner.
         with tempfile.TemporaryDirectory(prefix='dotctl-stow-') as config_home:
@@ -762,12 +812,17 @@ def apply_stow(args, repo, entries, conflicts, command):
             for source, dest, _ in entries:
                 if dest not in original and managed(dest, source):
                     dest.unlink()
-            for dest, backup in reversed(moved):
-                source = next(s for s, d, _ in entries if d == dest)
+            sources = {dest: source for source, dest, _ in entries}
+            for dest, backup, link_target in reversed(moved):
+                source = sources[dest]
                 if managed(dest, source):
                     dest.unlink()
                 if not exists(dest):
-                    backup.rename(dest)
+                    if link_target is None:
+                        backup.rename(dest)
+                    else:
+                        dest.symlink_to(link_target)
+                        backup.unlink()
         raise
 
 
