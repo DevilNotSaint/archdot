@@ -260,12 +260,74 @@ def select_numbers(title, labels, allow_all=False, render=None):
         message = 'Введите номера из списка; 0 — вернуться назад.'
 
 
-def action_choice(menu, render):
-    """Arrow navigation on a terminal; retain numeric input for pipes/scripts."""
-    if not sys.stdin.isatty() or not sys.stdout.isatty():
-        return input('Выберите действие: ').strip()
-    lines = menu.splitlines()
-    selected, digits = 0, ''
+def select_actions(page, labels, render, verb='Подключить'):
+    """Space toggles rows; Enter applies the selection or a typed command."""
+    selected = []
+    cursor = 0
+    typed = ''
+    message = ''
+    terminal = sys.stdin.isatty() and sys.stdout.isatty()
+    def screen():
+        items = '\n'.join(f'{"›" if terminal and i == cursor else " "} {i + 1}. [{"✓" if i in selected else " "}] {label}'
+                          for i, label in enumerate(labels))
+        items += (f'\n\n↑/↓ — курсор · Пробел — отметить · Enter — {verb.lower()} выбранные'
+                  '\n-a — все · 1 2 5 -s — выбранные по номерам · 0 / Esc — назад')
+        return items
+    with terminal_keys() if terminal else contextlib.nullcontext() as read_key:
+        while True:
+            render(page, screen(), message + (f'\nКоманда: {typed}' if typed else ''))
+            if terminal:
+                key = read_key()
+                if key in ('up', 'down'):
+                    cursor = (cursor + (1 if key == 'down' else -1)) % max(1, len(labels))
+                    continue
+                if key in ('\x03', '\x04'):
+                    raise KeyboardInterrupt
+                if key == '\x1b':
+                    return []
+                if key in ('\x7f', '\b'):
+                    typed = typed[:-1]
+                    continue
+                if key == ' ' and not typed:
+                    if labels:
+                        if cursor in selected:
+                            selected.remove(cursor)
+                        else:
+                            selected.append(cursor)
+                    message = ''
+                    continue
+                if key not in ('\r', '\n'):
+                    if key and key in '0123456789 -as':
+                        typed += key
+                    continue
+                parts = typed.strip().split()
+                typed = ''
+            else:
+                parts = input('Выбор: ').strip().split()
+            if parts == ['0']:
+                return []
+            if parts == ['-a']:
+                selected = list(range(len(labels)))
+                if selected:
+                    render(page, screen(), 'Выбраны все пункты.')
+                    return selected
+            apply_selected = not parts or parts[-1] == '-s'
+            if parts and parts[-1] == '-s':
+                parts = parts[:-1]
+            if parts:
+                if not all(p.isdecimal() and 1 <= int(p) <= len(labels) for p in parts):
+                    message = 'Введите номера из списка, -s, -a или 0.'
+                    continue
+                selected = list(dict.fromkeys(int(p) - 1 for p in parts))
+            if apply_selected and selected:
+                render(page, screen(), 'Выбрано: ' + ', '.join(labels[i] for i in selected))
+                return selected
+            message = 'Сначала выберите пункты.' if apply_selected else ''
+
+
+@contextlib.contextmanager
+def terminal_keys():
+    """Read terminal keys and always restore the original terminal mode."""
     with contextlib.ExitStack() as stack:
         if os.name == 'nt':
             import msvcrt
@@ -285,22 +347,36 @@ def action_choice(menu, render):
             tty.setcbreak(fd)
 
             def read_key():
-                key = os.read(fd, 1).decode()
+                data = os.read(fd, 1)
+                if not data:
+                    raise EOFError
+                key = data.decode()
                 if key == '\x1b':
                     sequence = ''
                     while select.select([fd], [], [], 0.05)[0]:
-                        sequence += os.read(fd, 1).decode()
+                        part = os.read(fd, 1)
+                        if not part:
+                            break
+                        sequence += part.decode()
                         if sequence[-1].isalpha():
                             break
-                    # Only a standalone Escape exits; other terminal sequences
-                    # (including left/right arrows) are ignored.
                     return {'[A': 'up', '[B': 'down', 'OA': 'up', 'OB': 'down'}.get(
                         sequence, '' if sequence else key)
                 return key
+        yield read_key
+
+
+def action_choice(menu, render, page='Главное меню'):
+    """Arrow navigation on a terminal; retain numeric input for pipes/scripts."""
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return input('Выберите действие: ').strip()
+    lines = menu.splitlines()
+    selected, digits = 0, ''
+    with terminal_keys() as read_key:
         while True:
             marked = '\n'.join(('› ' if i == selected else '  ') + line.strip()
                                for i, line in enumerate(lines))
-            render('Главное меню', marked,
+            render(page, marked,
                    '↑/↓ — выбор, Enter — выполнить; можно ввести номер: ' + digits)
             key = read_key()
             if key in ('up', 'down'):
@@ -320,17 +396,13 @@ def action_choice(menu, render):
 
 def interactive(repo, target):
     prefix = ['--repo', str(repo), '--target', str(target)]
-    menu = '''  1. Мои пакеты               — какие наборы конфигов доступны
+    menu = '''  1. Подключить пакеты        — выбрать один, несколько или все
   2. Проверить конфиги        — что подключено, а что требует настройки
-  3. Подключить все пакеты    — создать ссылки и сохранить старые конфиги
-  4. Подключить выбранные     — выбрать пакеты по номерам
-  5. Отключить пакеты         — убрать ссылки; бэкапы останутся
-  6. Посмотреть бэкапы        — найти сохранённые копии конфигов
-  7. Удалить бэкапы пакетов   — выбрать пакеты или удалить все копии
-  8. Удалить отдельные бэкапы — выбрать конкретные копии по номерам
-  9. Посмотреть, что изменится — проверка подключения без изменения файлов
-  10. Добавить пакет          — скопировать конфиг с сохранением вложенных папок
-  11. Удалить старые ссылки   — убрать ссылки на удалённые пакеты и файлы
+  3. Отключить пакеты         — убрать ссылки; бэкапы останутся
+  4. Посмотреть бэкапы        — найти сохранённые копии конфигов
+  5. Очистка                  — удалить бэкапы или старые ссылки
+  6. Посмотреть, что изменится — проверка подключения без изменения файлов
+  7. Добавить пакет           — скопировать конфиг с сохранением вложенных папок
   0. Выход'''
     title, options = 'Главное меню', menu
 
@@ -355,13 +427,23 @@ def interactive(repo, target):
             main(prefix + command)
         return output.getvalue().strip()
 
-    def choose(page, labels, allow_all=False):
+    def choose(page, labels, allow_all=False, actions=False, verb='Подключить'):
         nonlocal title, options
         def selection_screen(page, items, result=''):
             nonlocal title, options
             title, options = page, items
             render(page, items, result)
-        return select_numbers(page, labels, allow_all, render=selection_screen)
+        if actions:
+            return select_actions(page, labels, selection_screen, verb)
+        items = '\n'.join(f'  {i + 1}. {label}' for i, label in enumerate(labels)) + '\n  0. Назад'
+        while True:
+            selection_screen(page, items)
+            answer = action_choice(items, selection_screen, page)
+            if answer == '0':
+                return []
+            if answer.isdecimal() and 1 <= int(answer) <= len(labels):
+                return [int(answer) - 1]
+            selection_screen(page, items, 'Введите один номер из списка.')
 
     while True:
         try:
@@ -370,14 +452,22 @@ def interactive(repo, target):
             choice = action_choice(menu, render)
             if choice == '0':
                 return
-            if choice == '11':
+            if choice == '5':
+                cleanup = choose('Главное меню → Очистка',
+                                 ['Удалить бэкапы — выбор по пакетам или отдельным файлам',
+                                  'Удалить старые ссылки'])
+                if not cleanup:
+                    continue
+                choice = 'clean' if cleanup == [0] else 'prune'
+            if choice == 'prune':
                 stale = repository_links(repo, target, orphan_only=True)
                 if not stale:
                     show('Ссылки на удалённые пакеты или файлы не найдены.')
                     wait()
                     continue
                 orphan_names = sorted({name for name, _, _ in stale})
-                indexes = choose('Главное меню → Удалить старые ссылки', orphan_names, allow_all=True)
+                indexes = choose('Главное меню → Очистка → Старые ссылки', orphan_names,
+                                 actions=True, verb='Удалить')
                 if not indexes:
                     continue
                 command = ['prune'] + [orphan_names[index] for index in indexes]
@@ -388,7 +478,7 @@ def interactive(repo, target):
                     show('Отменено. Файлы не изменены.')
                 wait()
                 continue
-            if choice == '10':
+            if choice == '7':
                 title = 'Главное меню → Добавить пакет'
                 options = ('  1. Имя нового пакета, например hypr\n'
                            '  2. Выбор файла или папки по номерам\n'
@@ -433,30 +523,40 @@ def interactive(repo, target):
                 else:
                     count = import_package(repo, target, name, path)
                     show(f'Пакет {name} создан: {count} файлов.\n{structure}\n\n'
-                         'Выберите «Подключить выбранные» в главном меню для подключения.')
+                         'Выберите «Подключить пакеты» в главном меню для подключения.')
                 wait()
                 continue
             names = sorted(packages_in(repo))
-            if choice == '5':
+            if choice == '3':
                 names = sorted(set(names) | {name for name, _, _ in repository_links(repo, target)})
-            if choice == '1':
-                result = '\n'.join(f'  {number}. {name}' for number, name in enumerate(names, 1))
-                show('Доступные пакеты:\n' + result if names else 'Пакеты не найдены. Добавьте папку пакета в репозиторий.')
-                wait()
-                continue
-            if choice not in {'2', '3', '4', '5', '6', '7', '8', '9'}:
-                show('Введите номер от 0 до 11.')
+            if choice not in {'1', '2', '3', '4', '6', 'clean'}:
+                show('Введите номер от 0 до 7.')
                 wait()
                 continue
             if not names:
                 show('Пакеты не найдены. Добавьте папку пакета в репозиторий.')
                 wait()
                 continue
-            if choice in {'2', '6'}:
+            if choice in {'2', '4'}:
                 show(execute(['status' if choice == '2' else 'backups', '--all']))
                 wait()
                 continue
-            if choice == '8':
+            if choice == 'clean':
+                mode = choose('Главное меню → Очистка → Бэкапы',
+                              ['Выбрать пакеты', 'Выбрать отдельные бэкапы'])
+                if not mode:
+                    continue
+                if mode == [0]:
+                    indexes = choose('Главное меню → Очистка → Бэкапы пакетов', names,
+                                     actions=True, verb='Удалить')
+                    if not indexes:
+                        continue
+                    command = ['clean'] + [names[index] for index in indexes]
+                else:
+                    command = None
+            else:
+                command = None
+            if choice == 'clean' and command is None:
                 # Validate all package paths with the same checks used by clean.
                 execute(['backups', '--all'])
                 backups = sorted({str(source.relative_to(repo / name))
@@ -467,27 +567,25 @@ def interactive(repo, target):
                     wait()
                     continue
                 indexes = choose('Главное меню → Удалить отдельные бэкапы',
-                                 [name + '-backup' for name in backups])
+                                 [name + '-backup' for name in backups], actions=True, verb='Удалить')
                 if not indexes:
                     continue
                 command = ['clean', '--all']
                 for index in indexes:
                     command += ['--file', backups[index]]
-            else:
-                if choice == '3':
-                    selection = ['--all']
-                else:
-                    action_title = {'4': 'Подключить выбранные пакеты', '5': 'Отключить пакеты',
-                                    '7': 'Удалить бэкапы пакетов', '9': 'Посмотреть, что изменится'}[choice]
-                    indexes = choose('Главное меню → ' + action_title, names, allow_all=True)
-                    if not indexes:
-                        continue
-                    selection = [names[index] for index in indexes]
-                action = {'3': 'apply', '4': 'apply', '5': 'remove', '7': 'clean', '9': 'apply'}[choice]
+            elif choice != 'clean':
+                action_title = {'1': 'Подключить пакеты', '3': 'Отключить пакеты',
+                                '6': 'Посмотреть, что изменится'}[choice]
+                indexes = choose('Главное меню → ' + action_title, names, actions=True,
+                                 verb={'1': 'Подключить', '3': 'Отключить', '6': 'Проверить'}[choice])
+                if not indexes:
+                    continue
+                selection = [names[index] for index in indexes]
+                action = 'remove' if choice == '3' else 'apply'
                 command = [action] + selection
             preview = execute(command + ['--dry-run'])
             show('Будут выполнены действия:\n' + preview)
-            if choice == '9':
+            if choice == '6':
                 show('Что произойдёт при подключении:\n' + preview + '\n\nПроверка завершена. Файлы не изменены.')
                 wait()
                 continue

@@ -12,6 +12,27 @@ dotctl = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(dotctl)
 
 
+@unittest.skipIf(dotctl.os.name == 'nt', 'POSIX terminal sequences')
+class ActionChoiceTests(unittest.TestCase):
+    def choose_keys(self, keys):
+        with patch.object(dotctl.sys.stdin, 'isatty', return_value=True), \
+                patch.object(dotctl.sys.stdout, 'isatty', return_value=True), \
+                patch.object(dotctl.sys.stdin, 'fileno', return_value=0), \
+                patch('termios.tcgetattr', return_value=[]), \
+                patch('termios.tcsetattr'), patch('tty.setcbreak'), \
+                patch('select.select', return_value=([0], [], [])), \
+                patch.object(dotctl.os, 'read', side_effect=[bytes([key]) for key in keys]):
+            return dotctl.action_choice('  1. First\n  2. Second\n  0. Exit', lambda *args: None)
+
+    def test_horizontal_arrows_do_not_exit_or_change_selection(self):
+        for keys in (b'\x1b[C\x1b[D\r', b'\x1bOC\x1bOD\r', b'\x1b[1;5C\r'):
+            with self.subTest(keys=keys):
+                self.assertEqual(self.choose_keys(keys), '1')
+
+    def test_vertical_arrows_still_select(self):
+        self.assertEqual(self.choose_keys(b'\x1b[B\x1b[C\r'), '2')
+
+
 class SafetyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -54,6 +75,32 @@ class SafetyTests(unittest.TestCase):
             self.run_cli('clean', '--all', '--yes')
         self.assertTrue(backup.is_dir())
 
+    def test_clean_respects_operation_lock(self):
+        backup = self.home / '.bashrc-backup'
+        backup.write_text('keep')
+        (self.repo / '.dotctl.lock').mkdir()
+        with self.assertRaisesRegex(ValueError, r'\.dotctl\.lock'):
+            self.run_cli('clean', 'bash', '--yes')
+        self.assertEqual(backup.read_text(), 'keep')
+
+    def test_scan_error_aborts_import(self):
+        source = self.home / '.config'
+        source.mkdir()
+        def failed_walk(path, **kwargs):
+            kwargs['onerror'](PermissionError('unreadable directory'))
+            return iter(())
+        with patch.object(dotctl.os, 'walk', side_effect=failed_walk):
+            with self.assertRaises(PermissionError):
+                dotctl.import_package(self.repo, self.home, 'fresh', str(source))
+        self.assertFalse((self.repo / 'fresh').exists())
+        self.assertFalse((self.repo / '.dotctl.lock').exists())
+
+    def test_nested_package_paths_conflict(self):
+        (self.repo / 'other' / '.bashrc').mkdir(parents=True)
+        (self.repo / 'other' / '.bashrc' / 'nested').write_text('nested')
+        with self.assertRaisesRegex(ValueError, 'conflicting file and directory'):
+            self.run_cli('status', '--all')
+
     def test_clean_single_file(self):
         (self.repo / 'bash' / '.profile').write_text('profile')
         (self.home / '.bashrc-backup').write_text('bash')
@@ -70,15 +117,15 @@ class SafetyTests(unittest.TestCase):
 
     def test_menu_invalid_input_and_exit(self):
         output = io.StringIO()
-        with patch('builtins.input', side_effect=['invalid', '', '1', '', '0']), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=['invalid', '', '2', '', '0']), contextlib.redirect_stdout(output):
             self.run_cli()
-        self.assertIn('Введите номер от 0 до 11', output.getvalue())
-        self.assertIn('1. bash', output.getvalue())
+        self.assertIn('Введите номер от 0 до 7', output.getvalue())
+        self.assertIn('Подключить пакеты', output.getvalue())
 
     def test_menu_cancel_deletion(self):
         backup = self.home / '.bashrc-backup'
         backup.write_text('keep')
-        with patch('builtins.input', side_effect=['7', '1', 'n', '', '0']), contextlib.redirect_stdout(io.StringIO()):
+        with patch('builtins.input', side_effect=['5', '1', '1', '1 -s', 'n', '', '0']), contextlib.redirect_stdout(io.StringIO()):
             self.run_cli()
         self.assertEqual(backup.read_text(), 'keep')
 
@@ -86,7 +133,7 @@ class SafetyTests(unittest.TestCase):
         (self.repo / 'bash' / '.profile').write_text('profile')
         (self.home / '.bashrc-backup').write_text('bash')
         (self.home / '.profile-backup').write_text('profile')
-        with patch('builtins.input', side_effect=['8', '1', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
+        with patch('builtins.input', side_effect=['5', '1', '2', '1 -s', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
             self.run_cli()
         self.assertFalse((self.home / '.bashrc-backup').exists())
         self.assertTrue((self.home / '.profile-backup').exists())
@@ -101,14 +148,14 @@ class SafetyTests(unittest.TestCase):
         source = self.home / '.config' / 'hypr' / 'hyprland.lua'
         source.parent.mkdir(parents=True)
         source.write_text('return {}')
-        with patch('builtins.input', side_effect=['10', 'hypr', '1', '1', '1', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
+        with patch('builtins.input', side_effect=['7', 'hypr', '1', '1', '1', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
             self.run_cli()
         self.assertEqual((self.repo / 'hypr' / '.config' / 'hypr' / 'hyprland.lua').read_text(), 'return {}')
         self.assertEqual(source.read_text(), 'return {}')
         self.assertFalse(source.is_symlink())
 
     def test_existing_package_menu_offers_apply_without_import(self):
-        with patch('builtins.input', side_effect=['10', 'bash', '1', '', '', '0']), \
+        with patch('builtins.input', side_effect=['7', 'bash', '1', '', '', '0']), \
                 patch.object(dotctl.shutil, 'which', return_value='/usr/bin/stow'), \
                 patch.object(dotctl.subprocess, 'run') as run, \
                 patch.object(dotctl, 'import_package') as import_mock, \
@@ -207,7 +254,7 @@ class SafetyTests(unittest.TestCase):
     def test_menu_error_returns_to_menu(self):
         (self.home / '.bashrc-backup').mkdir()
         output = io.StringIO()
-        with patch('builtins.input', side_effect=['7', '1', 'да', '', '0']), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=['5', '1', '1', '1 -s', 'да', '', '0']), contextlib.redirect_stdout(output):
             self.run_cli()
         self.assertIn('Не удалось выполнить действие', output.getvalue())
         self.assertTrue((self.home / '.bashrc-backup').is_dir())
@@ -215,6 +262,26 @@ class SafetyTests(unittest.TestCase):
     def test_selection_retries_and_supports_all(self):
         with patch('builtins.input', side_effect=['4', '1 x', '3']), contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(dotctl.select_numbers('Пакеты', ['bash', 'yazi'], True), [0, 1])
+
+    def test_action_selection_flags_and_numeric_actions(self):
+        for answers, expected in [(['1 3', '-s'], [0, 2]),
+                                  (['2 1 -s'], [1, 0]),
+                                  (['-a'], [0, 1, 2]),
+                                  (['5'], [0, 1, 2]),
+                                  (['2', '4'], [1]),
+                                  (['-s', 'bad', '0'], [])]:
+            with self.subTest(answers=answers), patch('builtins.input', side_effect=answers):
+                self.assertEqual(dotctl.select_actions('Пакеты', ['a', 'b', 'c'], lambda *args: None), expected)
+
+    def test_connect_menu_previews_selected_packages(self):
+        (self.repo / 'zsh').mkdir()
+        (self.repo / 'zsh' / '.zshrc').write_text('zsh')
+        with patch('builtins.input', side_effect=['1', '1 2', '-s', 'n', '', '0']), \
+                patch.object(dotctl.shutil, 'which', return_value='/usr/bin/stow'), \
+                patch.object(dotctl.subprocess, 'run') as run, contextlib.redirect_stdout(io.StringIO()) as output:
+            self.run_cli()
+        self.assertIn('Подключить пакеты: bash, zsh', output.getvalue())
+        run.assert_not_called()
 
     def test_menu_eof_exits(self):
         with patch('builtins.input', side_effect=EOFError), contextlib.redirect_stdout(io.StringIO()):
@@ -225,10 +292,10 @@ class SafetyTests(unittest.TestCase):
         def answer(prompt):
             if 'Нажмите Enter' in prompt:
                 rendered = output.getvalue()
-                self.assertLess(rendered.rfind('0. Выход'), rendered.rfind('Доступные пакеты:'))
-                self.assertIn('1. bash', rendered)
+                self.assertLess(rendered.rfind('0. Выход'), rendered.rfind('Не подключён:'))
+                self.assertIn('.bashrc', rendered)
             return next(answers)
-        answers = iter(['1', '', '0'])
+        answers = iter(['2', '', '0'])
         with patch('builtins.input', side_effect=answer), patch.object(dotctl, 'clear_screen') as clear, contextlib.redirect_stdout(output):
             self.run_cli()
         self.assertEqual(clear.call_count, 3)
@@ -241,11 +308,11 @@ class SafetyTests(unittest.TestCase):
             screens.append(output.getvalue())
             output.seek(0)
             output.truncate()
-        with patch('builtins.input', side_effect=['7', '1', 'нет', '', '0']), patch.object(dotctl, 'clear_screen', side_effect=record_clear), contextlib.redirect_stdout(output):
+        with patch('builtins.input', side_effect=['5', '1', '1', '1 -s', 'нет', '', '0']), patch.object(dotctl, 'clear_screen', side_effect=record_clear), contextlib.redirect_stdout(output):
             self.run_cli()
         result = next(screen for screen in screens if 'Отменено.' in screen)
-        self.assertIn('Главное меню → Удалить бэкапы пакетов', result)
-        self.assertLess(result.index('1. bash'), result.index('Отменено.'))
+        self.assertIn('Главное меню → Очистка → Бэкапы пакетов', result)
+        self.assertLess(result.index('1. [✓] bash'), result.index('Отменено.'))
         self.assertTrue((self.home / '.bashrc-backup').exists())
 
     def test_clear_screen_only_for_terminal(self):
@@ -331,7 +398,7 @@ class SafetyTests(unittest.TestCase):
         (self.repo / 'bash').rmdir()
         link = self.home / '.old'
         self.make_link(link, self.repo / 'old' / '.old')
-        with patch('builtins.input', side_effect=['11', '1', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
+        with patch('builtins.input', side_effect=['5', '2', '1 -s', '', '', '0']), contextlib.redirect_stdout(io.StringIO()):
             self.run_cli()
         self.assertFalse(link.is_symlink())
 
